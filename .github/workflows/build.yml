@@ -1,0 +1,60 @@
+# Gera a tabela CEP -> coordenada a partir do CNEFE 2022 do IBGE.
+# Roda à mão (o Censo 2022 não muda). Cada UF num job; o último junta e publica no branch "dados".
+name: build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  uf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        uf: [11_RO, 12_AC, 13_AM, 14_RR, 15_PA, 16_AP, 17_TO, 21_MA, 22_PI, 23_CE, 24_RN, 25_PB, 26_PE, 27_AL,
+             28_SE, 29_BA, 31_MG, 32_ES, 33_RJ, 35_SP, 41_PR, 42_SC, 43_RS, 50_MS, 51_MT, 52_GO, 53_DF]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pandas==2.2.3
+      - name: baixa do IBGE
+        run: |
+          curl -sSf --retry 5 --retry-delay 30 -o ${{ matrix.uf }}.zip \
+            "https://ftp.ibge.gov.br/Cadastro_Nacional_de_Enderecos_para_Fins_Estatisticos/Censo_Demografico_2022/Arquivos_CNEFE/CSV/UF/${{ matrix.uf }}.zip"
+      - run: mkdir -p out && python scripts/build_uf.py ${{ matrix.uf }}.zip out/${{ matrix.uf }}.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uf-${{ matrix.uf }}
+          path: out/${{ matrix.uf }}.csv
+          retention-days: 7
+
+  junta:
+    needs: uf
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pandas==2.2.3
+      - uses: actions/download-artifact@v4
+        with:
+          path: ufs
+      - run: python scripts/merge.py ufs dist
+      - name: publica no branch dados
+        run: |
+          cd dist
+          git init -q -b dados
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          cp ../LEIA.md .
+          git add -A
+          git commit -qm "CEP -> coordenada (IBGE CNEFE 2022)"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" dados
